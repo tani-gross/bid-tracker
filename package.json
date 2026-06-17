@@ -4,6 +4,7 @@
   "description": "Watch a Goldin item bid and email on changes.",
   "main": "src/index.js",
   "scripts": {
+    "postinstall": "playwright install chromium",
     "start": "node src/index.js"
   },
   "keywords": [],

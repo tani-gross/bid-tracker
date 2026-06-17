@@ -27,3 +27,7 @@ npm start
 ```
 
 On the first run, the app stores the current bid in `state.json` and does not send an email. After that, it emails only when the bid changes from the last stored value.
+
+## Railway
+
+Railway's default Node environment may not include the Linux libraries Playwright needs. If that happens, deploy with the included `Dockerfile` so the app runs in the official Playwright image with Chromium dependencies preinstalled.

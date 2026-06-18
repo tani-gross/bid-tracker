@@ -8,6 +8,9 @@ const { chromium } = require("playwright");
 const DEFAULT_URL =
   "https://goldin.co/item/2023-24-panini-instant-black-19-victor-wembanyama-rookie-card-1-1-panihrjbw";
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
+const QUIET_HOURS_TIME_ZONE = "America/New_York";
+const QUIET_HOURS_START = 1;
+const QUIET_HOURS_END = 7;
 
 function getConfig() {
   const checkIntervalMs = Number(
@@ -41,6 +44,21 @@ function formatCurrency(value) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function getCurrentHourInTimeZone(timeZone) {
+  const formattedHour = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    hour12: false,
+    timeZone,
+  }).format(new Date());
+
+  return Number(formattedHour);
+}
+
+function isWithinQuietHours() {
+  const currentHour = getCurrentHourInTimeZone(QUIET_HOURS_TIME_ZONE);
+  return currentHour >= QUIET_HOURS_START && currentHour < QUIET_HOURS_END;
 }
 
 function extractBidFromText(text) {
@@ -153,6 +171,11 @@ async function sendBidChangeEmail(config, previousBid, currentBid) {
 }
 
 async function runCheck(browser, config) {
+  if (isWithinQuietHours()) {
+    console.log(`[skip] Quiet hours active in ${QUIET_HOURS_TIME_ZONE}; skipping check.`);
+    return;
+  }
+
   const currentBid = await fetchCurrentBid(browser, config.goldinUrl);
   const state = await loadState(config.statePath);
   const previousBid = typeof state.lastBid === "number" ? state.lastBid : null;

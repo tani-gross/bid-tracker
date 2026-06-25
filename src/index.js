@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const fs = require("fs/promises");
+const http = require("http");
 const path = require("path");
 const nodemailer = require("nodemailer");
 const { chromium } = require("playwright");
@@ -11,6 +12,12 @@ const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const QUIET_HOURS_TIME_ZONE = "America/New_York";
 const QUIET_HOURS_START = 1;
 const QUIET_HOURS_END = 7;
+const healthState = {
+  startedAt: new Date().toISOString(),
+  lastCheckedAt: null,
+  lastStatus: "starting",
+  lastError: null,
+};
 
 function getConfig() {
   const checkIntervalMs = Number(
@@ -172,6 +179,8 @@ async function sendBidChangeEmail(config, previousBid, currentBid) {
 
 async function runCheck(browser, config) {
   if (isWithinQuietHours()) {
+    healthState.lastStatus = "quiet-hours";
+    healthState.lastError = null;
     console.log(`[skip] Quiet hours active in ${QUIET_HOURS_TIME_ZONE}; skipping check.`);
     return;
   }
@@ -204,7 +213,42 @@ async function runCheck(browser, config) {
   });
 }
 
+function startHealthServer() {
+  const port = Number(process.env.PORT || 3000);
+
+  const server = http.createServer((request, response) => {
+    const isHealthRequest =
+      request.url === "/" ||
+      request.url === "/health" ||
+      request.url === "/healthz";
+
+    if (!isHealthRequest) {
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ ok: false, error: "Not found" }));
+      return;
+    }
+
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(
+      JSON.stringify({
+        ok: true,
+        status: healthState.lastStatus,
+        startedAt: healthState.startedAt,
+        lastCheckedAt: healthState.lastCheckedAt,
+        lastError: healthState.lastError,
+      }),
+    );
+  });
+
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`[health] Listening on 0.0.0.0:${port}`);
+  });
+
+  return server;
+}
+
 async function main() {
+  const healthServer = startHealthServer();
   const config = getConfig();
   const browser = await chromium.launch({ headless: true });
 
@@ -214,7 +258,13 @@ async function main() {
   const runOnce = async () => {
     try {
       await runCheck(browser, config);
+      healthState.lastCheckedAt = new Date().toISOString();
+      healthState.lastStatus = "ok";
+      healthState.lastError = null;
     } catch (error) {
+      healthState.lastCheckedAt = new Date().toISOString();
+      healthState.lastStatus = "error";
+      healthState.lastError = error.message;
       console.error(`[error] ${error.message}`);
     }
   };
@@ -230,6 +280,7 @@ async function main() {
 
   const shutdown = async () => {
     clearInterval(timer);
+    healthServer.close();
     await browser.close();
     process.exit(0);
   };

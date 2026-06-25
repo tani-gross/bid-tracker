@@ -24,9 +24,20 @@ function getConfig() {
     process.env.CHECK_INTERVAL_MS || DEFAULT_INTERVAL_MS,
   );
 
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.EMAIL_TO) {
+  const emailTo = process.env.EMAIL_TO;
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const useResend = Boolean(resendApiKey);
+  const hasSmtpConfig = Boolean(
+    process.env.SMTP_USER && process.env.SMTP_PASS,
+  );
+
+  if (!emailTo) {
+    throw new Error("Missing email config. Set EMAIL_TO in .env.");
+  }
+
+  if (!useResend && !hasSmtpConfig) {
     throw new Error(
-      "Missing email config. Set SMTP_USER, SMTP_PASS, and EMAIL_TO in .env.",
+      "Missing email config. Set RESEND_API_KEY and EMAIL_FROM, or SMTP_USER and SMTP_PASS.",
     );
   }
 
@@ -39,8 +50,9 @@ function getConfig() {
     smtpSecure: String(process.env.SMTP_SECURE || "true") === "true",
     smtpUser: process.env.SMTP_USER,
     smtpPass: process.env.SMTP_PASS,
+    resendApiKey,
     emailFrom: process.env.EMAIL_FROM || process.env.SMTP_USER,
-    emailTo: process.env.EMAIL_TO,
+    emailTo,
     runOnce: String(process.env.RUN_ONCE || "false") === "true",
   };
 }
@@ -149,16 +161,6 @@ async function saveState(statePath, state) {
 }
 
 async function sendBidChangeEmail(config, previousBid, currentBid) {
-  const transporter = nodemailer.createTransport({
-    host: config.smtpHost,
-    port: config.smtpPort,
-    secure: config.smtpSecure,
-    auth: {
-      user: config.smtpUser,
-      pass: config.smtpPass,
-    },
-  });
-
   const subject = `Goldin bid changed: ${formatCurrency(previousBid)} -> ${formatCurrency(currentBid)}`;
   const text = [
     "The Goldin bid changed.",
@@ -168,6 +170,43 @@ async function sendBidChangeEmail(config, previousBid, currentBid) {
     `Time: ${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}`,
     `URL: ${config.goldinUrl}`,
   ].join("\n");
+
+  if (config.resendApiKey) {
+    if (!config.emailFrom) {
+      throw new Error("Missing EMAIL_FROM for Resend delivery.");
+    }
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: config.emailFrom,
+        to: [config.emailTo],
+        subject,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Resend request failed (${response.status}): ${errorText}`);
+    }
+
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: config.smtpHost,
+    port: config.smtpPort,
+    secure: config.smtpSecure,
+    auth: {
+      user: config.smtpUser,
+      pass: config.smtpPass,
+    },
+  });
 
   await transporter.sendMail({
     from: config.emailFrom,
